@@ -1,0 +1,515 @@
+/*
+package connect;
+import com.mongodb.ConnectionString;
+import com.mongodb.reactivestreams.client.MongoClient;
+import com.mongodb.reactivestreams.client.MongoClients;
+import com.mongodb.reactivestreams.client.MongoDatabase;
+public class DBConnection {
+	private static final String CONNECTION_STRING = "mongodb://localhost:27017/";
+	private static final String DB_NAME = "restaurants"; // "ordersDB";
+
+	private MongoClient client;
+	private MongoDatabase db;
+
+	private static final DBConnection instance = new DBConnection();
+	
+	public DBConnection() {
+		try {
+		ConnectionString connectionString = new ConnectionString(CONNECTION_STRING);
+		this.client = MongoClients.create(connectionString);
+		this.db = this.client.getDatabase(DB_NAME);
+		System.out.println("Connected mongodb: " + CONNECTION_STRING);
+		System.out.println("Connected to database: " + DB_NAME);
+    } catch (Exception e) {
+        System.err.println("Error connecting to database: " + e.getMessage());
+        e.printStackTrace();
+    }
+	}
+	public DBConnection getInstance() {
+	
+		return instance;
+	}
+
+	public MongoClient getClient() {
+		return this.client;
+	}
+
+	public MongoDatabase getDatabase() {
+		return db;
+	}
+	
+	public boolean isConnected() {
+	    return this.client != null && this.db != null;
+	}
+	
+}
+----------------------------------------------------------------app
+package demo;
+
+import java.util.Arrays;
+import java.util.List;
+
+import javax.swing.text.Document;
+
+import org.bson.types.ObjectId;
+import org.reactivestreams.Subscriber;
+import org.reactivestreams.Subscription;
+
+import com.mongodb.reactivestreams.client.MongoDatabase;
+
+import connect.DBConnection;
+import dao.RestaurantDAO;
+import entity.Address;
+import entity.Grade;
+import entity.Restaurant;
+
+public class App {
+	public static void main(String[] args) throws InterruptedException {
+		// Kết nối đến cơ sở dữ liệu MongoDB
+		DBConnection connect = new DBConnection();
+		// Lấy tham chiếu đến cơ sở dữ liệu
+		MongoDatabase db =connect.getInstance().getDatabase();
+		// Thực hiện các thao tác với restaurantDAO ở đây
+		RestaurantDAO restaurantDAO = new RestaurantDAO(db);
+		System.out.println("Connet thanh cong");
+	
+		 List<Restaurant> restaurants5top = restaurantDAO.getAvg();
+		
+		// Kiểm tra xem restaurants5top có null không
+		 if (restaurants5top != null) {
+		     // Nếu danh sách nhà hàng không null, truy cập vào danh sách và thực hiện các thao tác khác
+		     for (Restaurant foundRestaurant : restaurants5top) {
+		         System.out.println(foundRestaurant);
+		     }
+		 } else {
+		     // Nếu danh sách nhà hàng là null, in ra thông báo
+		     System.out.println("Khong co du lieu truy van  aggregate.");
+		 }
+		  
+		 
+		 /*
+			//them
+			Address address = new Address("14511", Arrays.asList(-2.5, 4.0),"North Conduit Avenue", "11436");
+			Grade grade = new Grade("2014-12-23", "A", 11);
+			List<Grade> grades = Arrays.asList(grade);
+
+			Restaurant restaurant = new Restaurant(null, "12453", "Haha", "Queens","American",address, grades);
+			restaurantDAO.addRestaurantd(restaurant);
+			((Iterable<Double>) restaurant).forEach(p -> System.out.println(p));
+			
+			*/
+			
+			/*
+			// tim nha hang
+			  List<Restaurant> restaurants = restaurantDAO.getRetaurants("Brooklyn","Jewish/Kosher");
+			
+		       // In ra danh sách các nhà hàng
+			  for (Restaurant foundRestaurant : restaurants) {
+		            System.out.println(foundRestaurant);
+		        }
+			  */
+
+		 
+		  // Tìm một nhà hàng theo ID
+	        String restaurantId = "1234";
+	        Restaurant restaurant = restaurantDAO.find(restaurantId);
+	        System.out.println("Restaurant found by ID:");
+	        System.out.println(restaurant);
+
+	        // Thêm một nhà hàng mới
+	        Restaurant newRestaurant = new Restaurant();
+	        newRestaurant.setName("New Restaurant");
+	        newRestaurant.setBorough("Manhattan");
+	        newRestaurant.setCuisine("Italian");
+	        boolean isAdded = restaurantDAO.addRestaurant(newRestaurant);
+	        if (isAdded) {
+	            System.out.println("New restaurant added successfully.");
+	        } else {
+	            System.out.println("Failed to add new restaurant.");
+	        }
+
+	       
+	       
+	        // Xóa một nhà hàng theo ID
+	        String restaurantToDeleteId = "1234";
+	        boolean isDeleted = restaurantDAO.deleteRestaurantById(restaurantToDeleteId);
+	        if (isDeleted) {
+	            System.out.println("Restaurant with ID " + restaurantToDeleteId + " deleted successfully.");
+	        } else {
+	            System.out.println("Failed to delete restaurant with ID " + restaurantToDeleteId + ".");
+	        }
+
+		System.out.println("Ket Thuc!!!!!!!!!!!!!!!!!!!!!!!!!!!");
+		
+	}
+
+}
+--------------------------------------------------------------------
+package dao;
+
+import static com.mongodb.MongoClientSettings.getDefaultCodecRegistry;
+import static org.bson.codecs.configuration.CodecRegistries.fromProviders;
+import static org.bson.codecs.configuration.CodecRegistries.fromRegistries;
+
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
+import org.bson.Document;
+import org.bson.codecs.configuration.CodecProvider;
+import org.bson.codecs.configuration.CodecRegistry;
+import org.bson.codecs.pojo.PojoCodecProvider;
+import org.bson.conversions.Bson;
+import org.reactivestreams.Publisher;
+import org.reactivestreams.Subscriber;
+import org.reactivestreams.Subscription;
+import com.mongodb.client.model.Accumulators;
+import com.mongodb.client.model.Aggregates;
+import com.mongodb.client.model.Collation;
+import com.mongodb.client.model.Filters;
+import com.mongodb.client.model.IndexOptions;
+import com.mongodb.client.model.Sorts;
+import com.mongodb.client.result.DeleteResult;
+import com.mongodb.client.result.InsertOneResult;
+import com.mongodb.reactivestreams.client.AggregatePublisher;
+import com.mongodb.reactivestreams.client.MongoCollection;
+import com.mongodb.reactivestreams.client.MongoDatabase;
+
+import entity.Restaurant;
+
+
+public class RestaurantDAO {
+ @SuppressWarnings("unused")
+private MongoCollection<Restaurant> restaurantCollection;
+ 
+	public RestaurantDAO(MongoDatabase database) {
+		// TODO Auto-generated constructor stub
+		CodecProvider pojoCodecProvider = PojoCodecProvider.builder().automatic(true).build();
+		CodecRegistry pojoCodecRegistry = fromRegistries(getDefaultCodecRegistry(), fromProviders(pojoCodecProvider));
+		this.restaurantCollection = database.getCollection("Restaurants", Restaurant.class).withCodecRegistry(pojoCodecRegistry);
+		
+
+//		// Tạo chỉ mục văn bản cho trường "borough" và "cuisine"
+//				Document index = new Document()
+//				    .append("borough", "text")
+//				    .append("cuisine", "text");
+//
+//				IndexOptions indexOptions = new IndexOptions()
+//				    .name("borough_cuisine_text_index");
+//
+//				restaurantCollection.createIndex(index, indexOptions);
+	}
+	//db.restaurants.aggregate([{ $unwind: "$grades" },{ $group: { _id: "$restaurant_id", avgScore: { $avg: "$grades.score" }}}, { $sort: { avgScore: -1 } },{ $limit: 5 }])
+    public List<Restaurant> getAvg(){
+    	AtomicReference<List<Restaurant>> alr = new AtomicReference<>();
+    	CountDownLatch latch = new CountDownLatch(1);
+    	AggregatePublisher<Restaurant> publisher = restaurantCollection.aggregate(Arrays.asList(
+    			Aggregates.unwind("$grades"),
+    			Aggregates.group("$restaurant_id", Accumulators.avg("avgScore", "$grades.score")),
+    			Aggregates.sort(Sorts.descending("avgScore")),
+    			Aggregates.limit(5)), Restaurant.class);
+    	
+    	publisher.subscribe(new Subscriber<Restaurant>() {
+    		
+			@Override
+			public void onSubscribe(Subscription s) {
+				// TODO Auto-generated method stub
+				s.request(Integer.MAX_VALUE);
+			}
+
+			@Override
+			public void onNext(Restaurant t) {
+				// TODO Auto-generated method stub
+				alr.get().add(t);
+			}
+
+			@Override
+			public void onError(Throwable t) {
+				// TODO Auto-generated method stub
+				t.printStackTrace();
+                latch.countDown();
+				System.err.println("Đa xay ra loi: " + t.getMessage());
+			}
+
+			@Override
+			public void onComplete() {
+				// TODO Auto-generated method stub
+				latch.countDown();
+				System.out.println("AVG thanh cong");
+			}
+		});
+    	 try {
+    	        latch.await(); // Đợi cho tất cả các dữ liệu được xử lý
+    	    } catch (InterruptedException e) {
+    	        e.printStackTrace();
+    	    }
+
+    	    return alr.get();
+		
+    }
+    public Restaurant find(String id) {
+		AtomicReference<Restaurant> result = new AtomicReference<>();
+		CountDownLatch latch = new CountDownLatch(1);
+		Publisher<Restaurant> publisher = restaurantCollection.find(Filters.eq("_id", id)).first();
+		Subscriber<Restaurant> subscriber = new Subscriber<Restaurant>() {
+
+			@Override
+			public void onSubscribe(Subscription s) {
+				// TODO Auto-generated method stub
+				s.request(1);
+			}
+
+			@Override
+			public void onNext(Restaurant t) {
+				// TODO Auto-generated method stub
+				result.set(t);
+			}
+
+			@Override
+			public void onError(Throwable t) {
+				// TODO Auto-generated method stub
+				
+			}
+
+			@Override
+			public void onComplete() {
+				// TODO Auto-generated method stub
+				latch.countDown();
+			}
+		};
+		publisher.subscribe(subscriber);
+		try {
+			latch.await();
+		} catch (Exception e) {
+			// TODO: handle exception
+			e.printStackTrace();
+		}
+		return result.get();
+		
+	}
+    public boolean deleteRestaurantById(String id) {
+        final AtomicBoolean result = new AtomicBoolean(false);
+        final CountDownLatch latch = new CountDownLatch(1);
+
+        Publisher<DeleteResult> pub = restaurantCollection.deleteOne(Filters.eq("_id", id));
+
+        Subscriber<DeleteResult> sub = new Subscriber<DeleteResult>() {
+            public void onSubscribe(Subscription s) {
+                s.request(1);
+            }
+
+            public void onNext(DeleteResult t) {
+                result.set(t.getDeletedCount() > 0);
+            }
+
+            public void onError(Throwable t) {
+                t.printStackTrace();
+            }
+
+            public void onComplete() {
+                latch.countDown();
+            }
+        };
+
+        pub.subscribe(sub);
+
+        try {
+            latch.await();
+        } catch (InterruptedException e) {
+            e.printStackTrace();
+        }
+
+        return result.get();
+    }
+
+    public boolean addRestaurant(Restaurant restaurant) {
+		AtomicBoolean result = new AtomicBoolean(false);
+		CountDownLatch latch = new CountDownLatch(1);
+		Publisher<InsertOneResult> publisher = restaurantCollection.insertOne(restaurant);
+		Subscriber<InsertOneResult> subscriber = new Subscriber<InsertOneResult>() {
+
+			@Override
+			public void onSubscribe(Subscription s) {
+				// TODO Auto-generated method stub
+				s.request(1);
+			}
+
+			@Override
+			public void onNext(InsertOneResult t) {
+				// TODO Auto-generated method stub
+				System.out.println("Restauran : " + t.getInsertedId());
+			}
+
+			@Override
+			public void onError(Throwable t) {
+				// TODO Auto-generated method stub
+				t.printStackTrace();
+			}
+
+			@Override
+			public void onComplete() {
+				// TODO Auto-generated method stub
+				System.out.println("Completed");
+				latch.countDown();
+			}
+		};
+		publisher.subscribe(subscriber);
+		try {
+			latch.await();
+		} catch (InterruptedException e) {
+			// TODO: handle exception
+			e.printStackTrace();
+		}
+		return result.get();
+		
+	}
+  //db.Restaurants.find({ borough: 'Brooklyn',cuisine: 'Jewish/Kosher'})
+  	public List<Restaurant> getRetaurants(String borough, String cuisine) {
+  		// TODO Auto-generated method stub
+  		List<Restaurant> restaurants = new ArrayList<>();
+  		AtomicBoolean err = new AtomicBoolean(false);
+  		CountDownLatch latch = new CountDownLatch(1);
+  		// Tạo một bộ lọc văn bản từ borough và cuisine
+  		Bson filter = Filters.and(
+  				Filters.eq("borough", borough),
+  				Filters.eq("cuisine", cuisine)
+  				);
+  		
+  		Publisher<Restaurant> publisher = restaurantCollection.find(filter);		// Truy vấn cơ sở dữ liệu với bộ lọc văn bản
+  		// Xử lý kết quả trả về từ cơ sở dữ liệu
+  		Subscriber<Restaurant> subscriber  = new Subscriber<Restaurant>() {
+  			@Override
+  			public void onSubscribe(Subscription s) {
+  				// TODO Auto-generated method stub
+  				s.request(Integer.MAX_VALUE);
+  			}
+
+  			@Override
+  			public void onNext(Restaurant t) {
+  				// TODO Auto-generated method stub
+  				restaurants.add(t);
+  			}
+
+  			@Override
+  			public void onError(Throwable t) {
+  				// TODO Auto-generated method stub
+  				err.set(true);
+  				latch.countDown();
+  				 System.err.println("Đa xay ra loi: " + t.getMessage());
+  			}
+
+  			@Override
+  			public void onComplete() {
+  				// TODO Auto-generated method stub
+  				latch.countDown();
+  				System.out.println("Tim Co trong mongodb");
+  				
+  			}
+  		};
+  		publisher.subscribe(subscriber);	// Đăng ký Subscriber và chờ kết quả
+  		try {
+  			latch.await();
+  		} catch (InterruptedException e) {
+  			// TODO: handle exception
+  			e.printStackTrace();
+  		}
+  		// Nếu có lỗi, ném ngoại lệ
+  		if(err.get()) {
+  			throw new RuntimeException(" Khong tìm thay khi nap vao ");
+  		}
+  		return restaurants;
+  	}
+
+
+
+}
+--------------------------------------------
+<dependencies>
+        <!-- https://mvnrepository.com/artifact/ch.qos.logback/logback-classic -->
+        <dependency>
+            <groupId>ch.qos.logback</groupId>
+            <artifactId>logback-classic</artifactId>
+            <version>1.2.5</version>
+        </dependency>
+
+        <!-- https://mvnrepository.com/artifact/org.slf4j/slf4j-api -->
+        <dependency>
+            <groupId>org.slf4j</groupId>
+            <artifactId>slf4j-api</artifactId>
+            <version>1.7.32</version>
+        </dependency>
+
+        <!-- https://mvnrepository.com/artifact/org.mongodb/mongodb-driver-reactivestreams -->
+        <dependency>
+            <groupId>org.mongodb</groupId>
+            <artifactId>mongodb-driver-reactivestreams</artifactId>
+            <version>4.11.0</version>
+        </dependency>
+  		<!-- https://mvnrepository.com/artifact/org.junit.platform/junit-platform-launcher -->
+		<dependency>
+			<groupId>org.junit.platform</groupId>
+			<artifactId>junit-platform-launcher</artifactId>
+			<version>1.10.2</version>
+			<scope>test</scope>
+		</dependency>
+		<!-- https://mvnrepository.com/artifact/org.junit.jupiter/junit-jupiter-engine -->
+		<dependency>
+			<groupId>org.junit.jupiter</groupId>
+			<artifactId>junit-jupiter-engine</artifactId>
+			<version>5.10.2</version>
+			<scope>test</scope>
+		</dependency>
+		<!-- https://mvnrepository.com/artifact/org.junit.vintage/junit-vintage-engine -->
+		<dependency>
+			<groupId>org.junit.vintage</groupId>
+			<artifactId>junit-vintage-engine</artifactId>
+			<version>5.10.2</version>
+			<scope>test</scope>
+		</dependency>
+
+    </dependencies>
+-------------------------------------------------------------
+//package test;
+//
+//import static org.junit.jupiter.api.Assertions.assertEquals;
+//
+//import java.util.Arrays;
+//
+//import org.junit.jupiter.api.BeforeAll;
+//import org.junit.jupiter.api.Test;
+//
+//import com.mongodb.reactivestreams.client.MongoDatabase;
+//
+//import dao.RestaurantDAO;
+//import entities.Product;
+//import entity.Restaurant;
+//import utils.DBConnection;
+//
+//public class RestaurantTest {
+//private static RestaurantDAO restaurantDAO;
+//
+//@BeforeAll
+//static void setup() {
+//	DBConnection connection = new DBConnection();
+//	MongoDatabase database = connection.getInstance().getDatabase();
+//	restaurantDAO= new RestaurantDAO(database);
+//}
+//
+////@Test
+////void find() {
+////	String Restaurasnnt_id = "1234";
+////	Restaurant restaurant = restaurantDAO.find("1234");		
+////	assertEquals(355L, restaurant.getProductId());
+////}
+//
+////@Test
+////void addProduct() {
+////	Product product = new Product(325l, "Brand name 325", "Category name 325", "Product Name 325" , Arrays.asList("yellow"),2022, 11999.99d);
+////	boolean result = productDAO.addProduct(product);
+////	assertEquals(true, result);
+////}
+//
+*/
+
